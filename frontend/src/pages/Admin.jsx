@@ -9,6 +9,8 @@ export default function Admin() {
   const log = useApi('/audit?limit=100', { poll: 20000, topics: ['patients', 'admissions', 'roster', 'imaging'] })
   const [f, setF] = useState({ username: '', full_name: '', password: '', role: 'nurse', specialty: '' })
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
+  const [action, setAction] = useState('')
+  const exportAct = useAction()
   const act = useAction(async () => { setF({ username: '', full_name: '', password: '', role: 'nurse', specialty: '' }); await staff.reload(); await log.reload() })
   return (
     <>
@@ -33,7 +35,17 @@ export default function Admin() {
           <Table rows={staff.data} cols={[{ h: 'Name', render: (s) => s.full_name }, { h: 'Username', render: (s) => s.username }, { h: 'Role', render: (s) => <Badge>{s.role}</Badge> }, { h: 'Specialty', render: (s) => s.specialty || '—' }]} />
         </div>
         <div className="card">
-          <h2>Recent activity</h2>
+          <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>Recent activity</h2>
+            <div className="row">
+              <select style={{ width: 120 }} value={action} onChange={(e) => setAction(e.target.value)} aria-label="Filter export by action">
+                <option value="">All actions</option>{['READ', 'CREATE', 'UPDATE', 'DELETE', 'LOGIN', 'WARN'].map((a) => <option key={a}>{a}</option>)}
+              </select>
+              <button className="btn ghost sm" disabled={exportAct.busy}
+                onClick={() => exportAct.run(() => api.download(`/audit.csv?limit=5000${action ? `&action=${action}` : ''}`, `audit-log-${new Date().toLocaleDateString('en-CA')}.csv`))}>Download CSV</button>
+            </div>
+          </div>
+          {exportAct.banner}
           <Loading state={log} />
           <Table rows={log.data} cols={[{ h: 'When', render: (l) => fmtDateTime(l.at) }, { h: 'User', render: (l) => l.username }, { h: 'Action', render: (l) => <Badge kind={l.action === 'WARN' ? 'bad' : ''}>{l.action}</Badge> }, { h: 'Entity', render: (l) => `${l.entity}${l.entity_id ? ' #' + l.entity_id : ''}` }, { h: 'Detail', render: (l) => l.detail || '' }]} />
         </div>
