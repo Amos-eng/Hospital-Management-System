@@ -77,3 +77,30 @@ def test_login_lockout_and_recovery(client):
         assert login(client, "nobody.here", "x").status_code == 429
     finally:
         security.throttle._now = real
+
+
+# ---------- audit CSV export ----------
+def test_csv_safe_blocks_formula_injection():
+    from app.csvutil import csv_safe, to_csv
+    assert csv_safe("=HYPERLINK(\"http://evil\")") == "'=HYPERLINK(\"http://evil\")"
+    assert csv_safe("+1") == "'+1" and csv_safe("-2") == "'-2" and csv_safe("@x") == "'@x"
+    assert csv_safe("normal") == "normal" and csv_safe(None) == "" and csv_safe(5) == "5"
+    out = to_csv(["a", "b"], [["x,y", 'say "hi"']])
+    assert out == 'a,b\r\n"x,y","say ""hi"""\r\n'
+
+
+def test_audit_csv_export(client):
+    admin = auth(client, "admin")
+    r = client.get("/api/audit.csv?limit=50", headers=admin)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
+    assert "attachment" in r.headers["content-disposition"] and "audit-log.csv" in r.headers["content-disposition"]
+    lines = r.text.strip().split("\r\n")
+    assert lines[0] == "id,at_utc,username,action,entity,entity_id,detail" and len(lines) > 1
+    only = client.get("/api/audit.csv?action=login&username=admin", headers=admin).text.strip().split("\r\n")
+    assert len(only) > 1 and all(",admin,LOGIN," in l for l in only[1:])
+    assert client.get("/api/audit.csv?limit=0", headers=admin).status_code == 422
+    assert client.get("/api/audit.csv", headers=auth(client, "dr.webber")).status_code == 403
+    assert client.get("/api/audit.csv").status_code == 401
+    # exporting is itself audited
+    log = client.get("/api/audit", headers=admin).json()
+    assert any(e["entity"] == "audit_export" for e in log)

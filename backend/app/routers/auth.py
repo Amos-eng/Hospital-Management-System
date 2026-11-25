@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..csvutil import to_csv
 from ..database import get_db
 from ..models import AuditLog, Role, User
 from ..schemas import PasswordChangeIn, TokenOut, UserCreate, UserOut
@@ -59,6 +60,23 @@ def create_staff(body: UserCreate, db: Session = Depends(get_db), admin: User = 
     audit(db, admin, "CREATE", "user", user.id, f"role={body.role.value}")
     db.commit()
     return user
+
+
+@router.get("/audit.csv")
+def audit_csv(limit: int = Query(1000, ge=1, le=10000), username: str | None = None, action: str | None = None,
+              db: Session = Depends(get_db), admin: User = Depends(require())):
+    q = select(AuditLog).order_by(AuditLog.id.desc()).limit(limit)
+    if username:
+        q = q.where(AuditLog.username == username)
+    if action:
+        q = q.where(AuditLog.action == action.upper())
+    rows = db.scalars(q).all()
+    audit(db, admin, "READ", "audit_export", None, f"{len(rows)} rows")
+    db.commit()
+    body = to_csv(["id", "at_utc", "username", "action", "entity", "entity_id", "detail"],
+                  [(r.id, r.at.isoformat(timespec="seconds"), r.username, r.action, r.entity, r.entity_id, r.detail) for r in rows])
+    return Response(body, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="audit-log.csv"'})
 
 
 @router.get("/audit")
