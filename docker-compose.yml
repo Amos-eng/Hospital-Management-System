@@ -1,0 +1,27 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hms
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hms_dev_password}
+      POSTGRES_DB: hms
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hms"]
+      interval: 5s
+      retries: 10
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://hms:${POSTGRES_PASSWORD:-hms_dev_password}@db:5432/hms
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env (e.g. openssl rand -hex 32)}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-1}
+    depends_on:
+      db: { condition: service_healthy }
+    ports: ["8000:8000"]
+  frontend:
+    build: ./frontend
+    depends_on: [backend]
+    ports: ["8080:80"]
+volumes:
+  pgdata:
