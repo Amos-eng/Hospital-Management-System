@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { api } from '../api'
-import { Field, Loading, Status, Table, fmtTime, nowLocalInput, toApiTime, useAction, useApi } from '../ui'
+import { Field, Loading, Status, Table, fmtTime, nowLocalInput, toApiTime, tzOffset, useAction, useApi } from '../ui'
 
 export default function Appointments() {
   const [day, setDay] = useState(() => new Date().toLocaleDateString('en-CA'))
-  const list = useApi(`/appointments?day=${day}`, { topics: ['appointments'] })
+  const list = useApi(`/appointments?day=${day}&tz_offset=${tzOffset()}`, { topics: ['appointments'] })
   const patients = useApi('/patients?limit=200')
   const staff = useApi('/staff')
   const [f, setF] = useState({ patient_id: '', doctor_id: '', reason: '', start: nowLocalInput(1), end: nowLocalInput(2) })

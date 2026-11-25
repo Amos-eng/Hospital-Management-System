@@ -1,4 +1,4 @@
-import { Loading, useApi } from '../ui'
+import { Loading, tzOffset, useApi } from '../ui'
 
 const TILES = [
   ['er_waiting', 'ER waiting', (v) => v > 3 && 'alert'],
@@ -17,7 +17,7 @@ const TILES = [
 ]
 
 export default function Dashboard({ user }) {
-  const s = useApi('/dashboard', { poll: 60000, topics: ['er', 'beds', 'surgery', 'labs', 'imaging', 'admissions', 'roster', 'pharmacy', 'appointments', 'billing', 'patients'] })
+  const s = useApi(`/dashboard?tz_offset=${tzOffset()}`, { poll: 60000, topics: ['er', 'beds', 'surgery', 'labs', 'imaging', 'admissions', 'roster', 'pharmacy', 'appointments', 'billing', 'patients'] })
   const d = s.data
   return (
     <>

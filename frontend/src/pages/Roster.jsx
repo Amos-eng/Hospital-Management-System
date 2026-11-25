@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api'
-import { Badge, Field, Loading, Table, fmtTime, nowLocalInput, toApiTime, useAction, useApi } from '../ui'
+import { Badge, Field, Loading, Table, fmtTime, nowLocalInput, toApiTime, tzOffset, useAction, useApi } from '../ui'
 
 const localDay = (iso) => new Date(iso + 'Z').toLocaleDateString('en-CA')
 const addDays = (ymd, n) => { const d = new Date(ymd + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toLocaleDateString('en-CA') }
@@ -12,8 +12,8 @@ export default function Roster({ user }) {
   const [start, setStart] = useState(mondayOf())
   const canManage = ['doctor', 'admin'].includes(user.role)
   const canCover = ['doctor', 'surgeon', 'nurse', 'admin'].includes(user.role)
-  const shifts = useApi(`/shifts?start=${start}&days=7`, { topics: ['roster'] })
-  const cover = useApi(canCover ? `/shifts/coverage?start=${start}&days=7` : null, { topics: ['roster'] })
+  const shifts = useApi(`/shifts?start=${start}&days=7&tz_offset=${tzOffset()}`, { topics: ['roster'] })
+  const cover = useApi(canCover ? `/shifts/coverage?start=${start}&days=7&tz_offset=${tzOffset()}` : null, { topics: ['roster'] })
   const duty = useApi('/shifts/on-duty', { topics: ['roster'], poll: 60000 })
   const staff = useApi('/staff')
   const act = useAction(async () => { await Promise.all([shifts.reload(), cover.reload(), duty.reload()]) })

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api'
-import { Field, Loading, Modal, Status, Table, nowLocalInput, toApiTime, useAction, useApi } from '../ui'
+import { Field, Loading, Modal, Status, Table, nowLocalInput, toApiTime, tzOffset, useAction, useApi } from '../ui'
 
 const START_H = 6
 const SPAN_H = 14 // 06:00 – 20:00
@@ -13,9 +13,10 @@ function hoursOf(iso) {
 export default function Surgery({ user }) {
   const [day, setDay] = useState(() => new Date().toLocaleDateString('en-CA'))
   const rooms = useApi('/operating-rooms')
-  const list = useApi(`/surgeries?day=${day}`, { poll: 60000, topics: ['surgery'] })
+  const list = useApi(`/surgeries?day=${day}&tz_offset=${tzOffset()}`, { poll: 60000, topics: ['surgery'] })
   const [open, setOpen] = useState(false)
   const [sel, setSel] = useState(null)
+  const [warn, setWarn] = useState([])
   const act = useAction(list.reload)
   const canEdit = ['doctor', 'surgeon', 'nurse', 'admin'].includes(user.role)
 
@@ -33,6 +34,7 @@ export default function Surgery({ user }) {
         </div>
       </div>
       {act.banner}
+      {warn.length > 0 && <div className="error" role="alert" style={{ borderColor: 'var(--warn)', color: '#ffe1a0', background: 'rgba(255,183,3,.1)' }}><b>Surgery booked, but check the roster:</b><ul style={{ margin: '6px 0 0' }}>{warn.map((w) => <li key={w}>{w}</li>)}</ul><button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => setWarn([])}>Dismiss</button></div>}
       <Loading state={list} />
       <div className="card or-board">
         <div className="or-hours"><div /><div className="hrs">{hours.map((h) => <span key={h}>{h}:00</span>)}</div></div>
@@ -67,7 +69,7 @@ export default function Surgery({ user }) {
           { h: 'Status', render: (c) => <Status value={c.status} /> },
         ]} />
       </div>
-      {open && <Schedule rooms={rooms.data || []} onClose={() => setOpen(false)} onDone={async () => { setOpen(false); await list.reload() }} />}
+      {open && <Schedule rooms={rooms.data || []} onClose={() => setOpen(false)} onDone={async (r) => { setOpen(false); setWarn(r?.warnings || []); await list.reload() }} />}
       {sel && <CaseModal c={sel} canEdit={canEdit} onClose={() => setSel(null)} onDone={async () => { setSel(null); await list.reload() }} />}
     </>
   )

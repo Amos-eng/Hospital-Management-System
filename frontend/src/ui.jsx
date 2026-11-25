@@ -74,6 +74,7 @@ export function useAction(onDone) {
 export const fmtTime = (s) => (s ? new Date(s + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—')
 export const fmtDateTime = (s) => (s ? new Date(s + 'Z').toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—')
 export const money = (n) => Number(n || 0).toLocaleString(undefined, { style: 'currency', currency: 'USD' })
+export const tzOffset = () => -new Date().getTimezoneOffset() // minutes east of UTC, sent so the server uses *local* days
 export const age = (dob) => Math.floor((Date.now() - new Date(dob)) / 31557600000)
 
 export function Badge({ kind = '', children }) {
