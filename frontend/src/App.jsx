@@ -13,6 +13,7 @@ import Wards from './pages/Wards'
 import Roster from './pages/Roster'
 import Imaging from './pages/Imaging'
 import { LiveProvider, useLive } from './live'
+import { Field, Modal, useAction } from './ui'
 
 const CLIN = ['doctor', 'surgeon', 'nurse']
 const PAGES = [
@@ -73,6 +74,33 @@ function Login({ onLogin }) {
   )
 }
 
+function ChangePassword({ onClose }) {
+  const [f, setF] = useState({ current: '', next: '', confirm: '' })
+  const [done, setDone] = useState(false)
+  const act = useAction(async () => setDone(true))
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
+  const mismatch = f.confirm !== '' && f.next !== f.confirm
+  return (
+    <Modal title="Change password" onClose={onClose}>
+      {done ? (
+        <><div className="notice">Password changed. Use the new one next time you sign in.</div><button className="btn" onClick={onClose}>Close</button></>
+      ) : (
+        <>
+          {act.banner}
+          <div className="grid" style={{ maxWidth: 360 }}>
+            <Field label="Current password"><input type="password" autoComplete="current-password" value={f.current} onChange={set('current')} /></Field>
+            <Field label="New password (min 8 characters)"><input type="password" autoComplete="new-password" value={f.next} onChange={set('next')} /></Field>
+            <Field label="Confirm new password"><input type="password" autoComplete="new-password" value={f.confirm} onChange={set('confirm')} /></Field>
+            {mismatch && <span className="small" style={{ color: 'var(--bad)' }}>Passwords do not match</span>}
+            <button className="btn" disabled={act.busy || !f.current || f.next.length < 8 || f.next !== f.confirm}
+              onClick={() => act.run(() => api.post('/auth/change-password', { current_password: f.current, new_password: f.next }))}>Change password</button>
+          </div>
+        </>
+      )}
+    </Modal>
+  )
+}
+
 function LiveDot() {
   const { status } = useLive()
   return <div className="small muted" style={{ padding: '0 10px 8px' }}><span className={`dot ${status}`} />{status === 'live' ? 'Live updates on' : status === 'connecting' ? 'Connecting…' : 'Offline — retrying'}</div>
@@ -82,6 +110,7 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [ready, setReady] = useState(!getToken())
   const [page, setPage] = useState('dashboard')
+  const [pwOpen, setPwOpen] = useState(false)
 
   useEffect(() => {
     if (getToken()) api.get('/auth/me').then(setUser).catch(() => setToken(null)).finally(() => setReady(true))
@@ -109,10 +138,14 @@ export default function App() {
         <div className="me">
           <b>{user.full_name}</b><br />
           <span className="muted">{user.role.replace('_', ' ')}{user.specialty ? ` · ${user.specialty}` : ''}</span><br />
-          <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => { setToken(null); setUser(null) }}>Sign out</button>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="btn ghost sm" onClick={() => setPwOpen(true)}>Password</button>
+            <button className="btn ghost sm" onClick={() => { setToken(null); setUser(null) }}>Sign out</button>
+          </div>
         </div>
       </aside>
       <main className="main"><Current user={user} /></main>
+      {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}
     </div>
     </LiveProvider>
   )
