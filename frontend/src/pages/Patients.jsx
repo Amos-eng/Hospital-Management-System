@@ -65,7 +65,7 @@ function Register({ onClose, onDone }) {
 function Chart({ patient, user, onClose }) {
   const clinician = CLIN.includes(user.role)
   const [tab, setTab] = useState(clinician ? 'notes' : 'info')
-  const tabs = clinician ? ['notes', 'vitals', 'labs', 'imaging', 'prescriptions', 'admissions', 'info'] : ['info']
+  const tabs = clinician ? ['notes', 'timeline', 'vitals', 'labs', 'imaging', 'prescriptions', 'admissions', 'info'] : ['info']
   return (
     <Modal title={`${patient.first_name} ${patient.last_name} · ${patient.mrn}`} onClose={onClose}>
       <p>{age(patient.dob)} y · {patient.sex} · blood {patient.blood_type || '?'} {patient.allergies && <Badge kind="bad">Allergy: {patient.allergies}</Badge>}</p>
@@ -75,6 +75,7 @@ function Chart({ patient, user, onClose }) {
         <div><h3>Insurance</h3><p>{patient.insurance_provider || '—'}<br />{patient.insurance_number || ''}</p></div>
       </div>}
       {tab === 'notes' && <Notes pid={patient.id} canWrite={['doctor', 'surgeon', 'admin'].includes(user.role)} />}
+      {tab === 'timeline' && <Timeline pid={patient.id} />}
       {tab === 'vitals' && <Vitals pid={patient.id} />}
       {tab === 'labs' && <Simple path={`/patients/${patient.id}/labs`} cols={[
         { h: 'Test', render: (l) => l.test_name }, { h: 'Status', render: (l) => <Status value={l.status} /> },
@@ -89,6 +90,36 @@ function Chart({ patient, user, onClose }) {
         { h: 'Drug', render: (r) => r.drug_name }, { h: 'Dosage', render: (r) => `${r.dosage} ×${r.quantity}` },
         { h: 'By', render: (r) => r.prescriber_name }, { h: 'Status', render: (r) => <Status value={r.status} /> }]} />}
     </Modal>
+  )
+}
+
+const KIND_STYLE = { note: 'info', vitals: '', lab: 'warn', imaging: 'info', prescription: 'ok', admission: 'ok', er: 'bad', surgery: 'warn' }
+
+function Timeline({ pid }) {
+  const s = useApi(`/patients/${pid}/timeline?limit=200`, { topics: ['patients', 'labs', 'imaging', 'pharmacy', 'admissions', 'er', 'surgery'] })
+  const [kind, setKind] = useState('')
+  const kinds = [...new Set((s.data || []).map((e) => e.kind))]
+  const rows = (s.data || []).filter((e) => !kind || e.kind === kind)
+  return (
+    <>
+      <Loading state={s} />
+      {s.data && s.data.length > 0 && (
+        <div className="row" style={{ marginBottom: 10 }}>
+          <button className={`btn sm ${kind ? 'ghost' : ''}`} onClick={() => setKind('')}>All</button>
+          {kinds.map((k) => <button key={k} className={`btn sm ${kind === k ? '' : 'ghost'}`} onClick={() => setKind(k)}>{k}</button>)}
+        </div>
+      )}
+      {s.data?.length === 0 && <p className="muted">Nothing recorded yet.</p>}
+      <ol className="timeline">
+        {rows.map((e, i) => (
+          <li key={i} className={e.flag ? 'flag' : ''}>
+            <div className="row"><Badge kind={KIND_STYLE[e.kind]}>{e.kind}</Badge><b>{e.title}</b>{e.flag && <Badge kind="bad">attention</Badge>}</div>
+            {e.detail && <div style={{ whiteSpace: 'pre-wrap' }}>{e.detail}</div>}
+            <div className="muted small">{fmtDateTime(e.at)}{e.by ? ` · ${e.by}` : ''}</div>
+          </li>
+        ))}
+      </ol>
+    </>
   )
 }
 
