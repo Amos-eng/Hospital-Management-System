@@ -104,3 +104,15 @@ def test_audit_csv_export(client):
     # exporting is itself audited
     log = client.get("/api/audit", headers=admin).json()
     assert any(e["entity"] == "audit_export" for e in log)
+
+
+# ---------- dashboard ward occupancy ----------
+def test_dashboard_ward_occupancy(client):
+    d = client.get("/api/dashboard", headers=auth(client, "admin")).json()
+    wards = {w["ward"]: w for w in d["ward_occupancy"]}
+    assert set(wards) == {"ER", "ICU", "General"}
+    assert sum(w["total"] for w in wards.values()) == d["beds_total"] == 22
+    assert sum(w["occupied"] for w in wards.values()) == d["beds_occupied"]
+    for w in wards.values():
+        assert 0 <= w["occupied"] <= w["total"] and w["percent"] == round(100 * w["occupied"] / w["total"])
+    assert wards["ICU"]["occupied"] >= 1  # seeded inpatient

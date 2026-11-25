@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -20,7 +20,12 @@ def dashboard(tz_offset: int = Query(0, ge=-840, le=840), db: Session = Depends(
     count = lambda stmt: db.scalar(stmt) or 0
     beds_total = count(select(func.count(Bed.id)))
     beds_used = count(select(func.count(Bed.id)).where(Bed.occupied.is_(True)))
+    ward_rows = db.execute(select(Bed.ward, func.count(Bed.id), func.sum(case((Bed.occupied.is_(True), 1), else_=0)))
+                           .group_by(Bed.ward).order_by(Bed.ward)).all()
+    ward_occupancy = [dict(ward=w, total=t, occupied=int(o or 0), percent=round(100 * int(o or 0) / t) if t else 0)
+                      for w, t, o in ward_rows]
     return {
+        "ward_occupancy": ward_occupancy,
         "patients": count(select(func.count(Patient.id))),
         "er_waiting": count(select(func.count(ERVisit.id)).where(ERVisit.status == "waiting")),
         "er_in_treatment": count(select(func.count(ERVisit.id)).where(ERVisit.status == "in_treatment")),
