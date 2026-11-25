@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -13,8 +13,9 @@ router = APIRouter(prefix="/api", tags=["dashboard"])
 
 
 @router.get("/dashboard")
-def dashboard(db: Session = Depends(get_db), _: User = Depends(current_user)):
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+def dashboard(tz_offset: int = Query(0, ge=-840, le=840), db: Session = Depends(get_db), _: User = Depends(current_user)):
+    local_now = datetime.utcnow() + timedelta(minutes=tz_offset)
+    today = local_now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(minutes=tz_offset)
     tomorrow = today + timedelta(days=1)
     count = lambda stmt: db.scalar(stmt) or 0
     beds_total = count(select(func.count(Bed.id)))

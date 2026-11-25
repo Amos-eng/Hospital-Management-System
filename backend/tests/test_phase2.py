@@ -211,3 +211,49 @@ def test_ws_events_and_targeted_alerts(client):
 def test_dashboard_phase2_stats(client):
     d = client.get("/api/dashboard", headers=login(client, "admin")).json()
     assert d["inpatients"] >= 2 and d["imaging_pending"] >= 1 and d["staff_on_duty"] >= 0
+
+
+# ---------------- local-day filtering (tz_offset) ----------------
+def test_day_filters_respect_client_timezone(client):
+    h = login(client, "front.amy")
+    doc = uid(client, h, "dr.webber")
+    # 22:30 UTC on 1 Jan is 01:30 on 2 Jan in Nairobi (UTC+3 = 180 minutes)
+    body = {"patient_id": 1, "doctor_id": doc, "start": "2036-01-01T22:30:00", "end": "2036-01-01T23:00:00", "reason": "Late slot"}
+    assert client.post("/api/appointments", json=body, headers=h).status_code == 201
+    ids = lambda q: [a["reason"] for a in client.get(f"/api/appointments?{q}", headers=h).json()]
+    assert "Late slot" in ids("day=2036-01-02&tz_offset=180")       # local day 2 Jan
+    assert "Late slot" not in ids("day=2036-01-01&tz_offset=180")
+    assert "Late slot" in ids("day=2036-01-01")                      # default = UTC days (old behaviour)
+    assert "Late slot" not in ids("day=2036-01-02")
+    assert client.get("/api/appointments?day=2036-01-01&tz_offset=99999", headers=h).status_code == 422
+
+
+def test_roster_coverage_uses_local_days(client):
+    chief = login(client, "dr.webber")
+    who = uid(client, chief, "dr.altman")
+    # starts 23:00 UTC on 10 Mar = 02:00 on 11 Mar local
+    assert client.post("/api/shifts", headers=chief, json={"user_id": who, "kind": "night", "unit": "OR",
+                       "start": "2036-03-10T23:00:00", "end": "2036-03-11T09:00:00"}).status_code == 201
+    night = lambda q: next(c for c in client.get(f"/api/shifts/coverage?{q}", headers=chief).json() if c["kind"] == "night")
+    assert night("start=2036-03-11&days=1&tz_offset=180")["counts"]["doctor"] == 1
+    assert night("start=2036-03-10&days=1&tz_offset=180")["counts"]["doctor"] == 0
+    assert night("start=2036-03-10&days=1")["counts"]["doctor"] == 1  # UTC view
+
+
+# ---------------- surgery roster warnings ----------------
+def test_surgery_warns_when_not_rostered(client):
+    chief = login(client, "dr.webber")
+    staff = {u["username"]: u["id"] for u in client.get("/api/staff", headers=chief).json()}
+    room = client.get("/api/operating-rooms", headers=chief).json()[0]["id"]
+    base = {"patient_id": 1, "room_id": room, "surgeon_id": staff["dr.torres"], "procedure": "Hip repair"}
+
+    # no shift for dr.torres on that date: booked anyway (non-blocking) but with a warning
+    r = client.post("/api/surgeries", headers=chief, json={**base, "start": "2037-01-01T08:00:00", "end": "2037-01-01T10:00:00"})
+    assert r.status_code == 201 and any("dr." not in w and "Torres" in w for w in r.json()["warnings"])
+    # rostered for the whole window: no warning
+    assert client.post("/api/shifts", headers=chief, json={"user_id": staff["dr.torres"], "kind": "day", "unit": "OR",
+                       "start": "2037-01-02T06:00:00", "end": "2037-01-02T18:00:00"}).status_code == 201
+    r = client.post("/api/surgeries", headers=chief, json={**base, "start": "2037-01-02T08:00:00", "end": "2037-01-02T10:00:00"})
+    assert r.status_code == 201 and r.json()["warnings"] == []
+    # warnings are only set on booking, not on later reads
+    assert all(s["warnings"] == [] for s in client.get("/api/surgeries?day=2037-01-02", headers=chief).json())

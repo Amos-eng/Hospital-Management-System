@@ -181,6 +181,7 @@ class SurgeryOut(ORM):
     status: str
     notes: str | None
     team: list[dict] = []
+    warnings: list[str] = []  # non-blocking, set only when booking
 
 
 class RoomOut(ORM):

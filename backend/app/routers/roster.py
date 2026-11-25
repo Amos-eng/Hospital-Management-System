@@ -2,7 +2,7 @@
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,7 +10,7 @@ from ..database import get_db
 from ..models import Role, Shift, User, now
 from ..schemas import ShiftIn, ShiftOut
 from ..security import CLINICAL, audit, current_user, require
-from .helpers import shift_out
+from .helpers import day_bounds, shift_out
 
 router = APIRouter(prefix="/api/shifts", tags=["roster"])
 
@@ -19,17 +19,13 @@ ROSTERABLE = (Role.doctor, Role.surgeon, Role.nurse, Role.radiologist, Role.phar
 MIN_COVER = {"nurse": 2, "doctor": 1, "surgeon": 1}
 
 
-def _day_bounds(d: date):
-    s = datetime.combine(d, datetime.min.time())
-    return s, s + timedelta(days=1)
-
-
 @router.get("", response_model=list[ShiftOut])
-def list_shifts(start: date, days: int = 7, user_id: int | None = None, db: Session = Depends(get_db),
+def list_shifts(start: date, days: int = 7, tz_offset: int = Query(0, ge=-840, le=840), user_id: int | None = None,
+                db: Session = Depends(get_db),
                 _: User = Depends(current_user)):
     if not 1 <= days <= 31:
         raise HTTPException(422, "days must be between 1 and 31")
-    lo, _hi = _day_bounds(start)
+    lo, _hi = day_bounds(start, tz_offset)
     hi = lo + timedelta(days=days)
     q = select(Shift).where(Shift.start < hi, Shift.end > lo).order_by(Shift.start)
     if user_id:
@@ -45,16 +41,16 @@ def on_duty(db: Session = Depends(get_db), _: User = Depends(current_user)):
 
 
 @router.get("/coverage")
-def coverage(start: date, days: int = 7, db: Session = Depends(get_db), _: User = Depends(require(*CLINICAL))):
+def coverage(start: date, days: int = 7, tz_offset: int = Query(0, ge=-840, le=840), db: Session = Depends(get_db), _: User = Depends(require(*CLINICAL))):
     """For each day and regular shift kind: head-count per role vs the minimum."""
     if not 1 <= days <= 31:
         raise HTTPException(422, "days must be between 1 and 31")
-    lo, _hi = _day_bounds(start)
+    lo, _hi = day_bounds(start, tz_offset)
     hi = lo + timedelta(days=days)
     shifts = db.scalars(select(Shift).where(Shift.start >= lo, Shift.start < hi, Shift.kind != "on_call")).all()
     counts = defaultdict(lambda: defaultdict(int))
     for s in shifts:
-        counts[(s.start.date(), s.kind)][s.user.role.value] += 1
+        counts[((s.start + timedelta(minutes=tz_offset)).date(), s.kind)][s.user.role.value] += 1
     out = []
     for i in range(days):
         d = start + timedelta(days=i)

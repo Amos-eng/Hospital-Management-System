@@ -1,8 +1,14 @@
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 
 from ..models import (Appointment, Drug, ERVisit, Invoice, LabOrder, Prescription, Surgery)
 from ..schemas import (AppointmentOut, DrugOut, ERVisitOut, InvoiceOut, LabOrderOut,
                        PrescriptionOut, SurgeryOut)
+
+
+def day_bounds(d: date, tz_offset: int = 0):
+    """UTC [lo, hi) bounds of the *local* calendar day d, for a client `tz_offset` minutes east of UTC."""
+    lo = datetime.combine(d, time.min) - timedelta(minutes=tz_offset)
+    return lo, lo + timedelta(days=1)
 
 
 def _pname(p):

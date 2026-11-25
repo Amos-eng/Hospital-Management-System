@@ -1,18 +1,18 @@
 """Appointments, ER triage/beds, and surgery / OR scheduling."""
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import (Appointment, Bed, ERVisit, OperatingRoom, Role, Surgery,
+from ..models import (Appointment, Bed, ERVisit, OperatingRoom, Role, Shift, Surgery,
                       SurgeryTeamMember, User, now)
 from ..live import hub
 from ..schemas import (AppointmentIn, AppointmentOut, BedOut, ERArrivalIn, ERAssignIn,
                        ERVisitOut, RoomOut, StatusIn, SurgeryIn, SurgeryOut)
 from ..security import CLINICAL, audit, current_user, require
-from .helpers import appt_out, er_out, surgery_out
+from .helpers import appt_out, day_bounds, er_out, surgery_out
 from .patients import get_patient_or_404
 
 router = APIRouter(prefix="/api", tags=["scheduling"])
@@ -22,12 +22,13 @@ SCHEDULERS = (Role.receptionist, *CLINICAL)
 
 # =============== Appointments ===============
 @router.get("/appointments", response_model=list[AppointmentOut])
-def list_appointments(day: date | None = None, doctor_id: int | None = None, patient_id: int | None = None,
+def list_appointments(day: date | None = None, tz_offset: int = Query(0, ge=-840, le=840),
+                      doctor_id: int | None = None, patient_id: int | None = None,
                       db: Session = Depends(get_db), _: User = Depends(require(*SCHEDULERS))):
     q = select(Appointment).order_by(Appointment.start)
     if day:
-        q = q.where(Appointment.start >= datetime.combine(day, datetime.min.time()),
-                    Appointment.start < datetime.combine(day + timedelta(days=1), datetime.min.time()))
+        lo, hi = day_bounds(day, tz_offset)
+        q = q.where(Appointment.start >= lo, Appointment.start < hi)
     if doctor_id:
         q = q.where(Appointment.doctor_id == doctor_id)
     if patient_id:
@@ -158,11 +159,11 @@ def rooms(db: Session = Depends(get_db), _: User = Depends(require(*CLINICAL))):
 
 
 @router.get("/surgeries", response_model=list[SurgeryOut])
-def list_surgeries(day: date | None = None, db: Session = Depends(get_db), _: User = Depends(require(*CLINICAL))):
+def list_surgeries(day: date | None = None, tz_offset: int = Query(0, ge=-840, le=840), db: Session = Depends(get_db), _: User = Depends(require(*CLINICAL))):
     q = select(Surgery).order_by(Surgery.start)
     if day:
-        q = q.where(Surgery.start >= datetime.combine(day, datetime.min.time()),
-                    Surgery.start < datetime.combine(day + timedelta(days=1), datetime.min.time()))
+        lo, hi = day_bounds(day, tz_offset)
+        q = q.where(Surgery.start >= lo, Surgery.start < hi)
     return [surgery_out(s) for s in db.scalars(q).all()]
 
 
@@ -209,8 +210,16 @@ def schedule_surgery(body: SurgeryIn, db: Session = Depends(get_db), user: User 
     db.add(s)
     db.flush()
     audit(db, user, "CREATE", "surgery", s.id, f"{body.priority}: {body.procedure}")
+    # non-blocking: flag people who are not rostered for the whole case (emergencies happen off-roster)
+    warnings = []
+    for person, label in [(surgeon, "Surgeon")] + [(db.get(User, m["user_id"]), m.get("role", "Team member").replace("_", " ").capitalize()) for m in body.team]:
+        if person.role in (Role.surgeon, Role.doctor, Role.nurse) and not db.scalar(select(Shift.id).where(
+                Shift.user_id == person.id, Shift.start <= body.start, Shift.end >= body.end)):
+            warnings.append(f"{label} {person.full_name} is not on the roster for the whole {body.start:%a %H:%M}-{body.end:%H:%M} window")
     db.commit()
-    return surgery_out(s)
+    out = surgery_out(s)
+    out.warnings = warnings
+    return out
 
 
 @router.patch("/surgeries/{sid}/status", response_model=SurgeryOut)
