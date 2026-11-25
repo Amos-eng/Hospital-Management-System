@@ -51,11 +51,17 @@ docker compose up --build                 # UI http://localhost:8080, API http:/
 Demo logins (password `Hospital123!`): `admin`, `dr.shepherd` (surgeon), `dr.hunt` (ER), `nurse.olivia`, `pharm.lee`, `lab.tran`, `bill.cole`, `front.amy`.
 **Set `SEED_DEMO_DATA=0` and create real accounts before any real use.**
 
+## Configuration
+
+Copy `.env.example` to `.env` and adjust it (Docker reads it automatically). Sign-in lockout, token lifetime, CORS origins and demo-data seeding are all environment variables.
+
 ## Tests
 
 ```bash
 cd backend && python -m pytest -q
 ```
+
+The same tests and a frontend build run on every push via GitHub Actions (`.github/workflows/ci.yml`).
 
 ## Known gaps / next phases
 
