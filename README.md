@@ -22,6 +22,10 @@ Role-based access: admin, doctor, surgeon, nurse, pharmacist, lab_tech, billing,
 | Staff roster | Weekly grid, on-duty-now panel, on-call. Blocks overlapping shifts and enforces 8 h rest between regular shifts; coverage strip flags shifts below minimum staffing (2 nurses, 1 doctor, 1 surgeon). Doctors/admin edit; everyone can view. |
 | Radiology | X-ray / CT / MRI / ultrasound orders → schedule → perform → report. STAT first, one scanner per modality (no overlapping 30-min slots), contrast only for CT/MRI, contrast-allergy check with an audited override, critical-finding flag. New `radiologist` role (`dr.chen`). |
 
+## Time zones
+
+The database stores UTC. The UI sends the browser's offset (`tz_offset`, minutes east of UTC) on day-based queries (surgeries, appointments, roster, roster coverage, dashboard "today"), so a "day" always means the user's local calendar day. API callers that omit it get UTC days.
+
 ## Upgrading from phase 1
 
 There are no database migrations yet. If you already ran phase 1, **delete `backend/hms.db`** (SQLite) so the new tables and demo data are created. With PostgreSQL, run `docker compose down -v` (this wipes the data), or add the `radiologist` role value and new tables yourself.
@@ -56,7 +60,6 @@ cd backend && python -m pytest -q
 ## Known gaps / next phases
 
 - Not production-ready for real patient data: no HIPAA/GDPR review, no password reset or MFA, no token revocation, no DB migrations (Alembic), no HTTPS config.
-- The roster, surgery and appointment day filters use UTC days; boards display local time, so late-evening items near midnight can land on the neighbouring day.
-- The roster does not yet check that a surgeon or ER doctor is actually on shift when a case is booked.
+- Booking a surgery warns (but does not block) when the surgeon or team is not rostered for the whole case; ER doctors are not yet checked against the roster.
 - Live updates run in a single server process; scaling to several workers needs a shared pub/sub (e.g. Redis).
 - Suggested next phases: blood bank, insurance claims, reports/analytics, inpatient medication charts (MAR) and nursing tasks, patient portal, HL7/FHIR integration.
