@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -17,6 +19,50 @@ ALGORITHM = "HS256"
 TOKEN_MINUTES = int(os.getenv("TOKEN_MINUTES", "480"))
 
 oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+
+class LoginThrottle:
+    """Lock a username out after repeated failures (in-memory, per process).
+
+    Keyed by the submitted username, whether or not it exists, so the response never
+    reveals which accounts are real. Use a shared store (e.g. Redis) when running several workers.
+    """
+
+    def __init__(self, max_fails: int = 5, window_s: int = 15 * 60):
+        self.max_fails, self.window_s = max_fails, window_s
+        self._fails: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+        self._now = time.monotonic  # replaceable in tests
+
+    def _recent(self, key: str) -> list[float]:
+        cutoff = self._now() - self.window_s
+        kept = [t for t in self._fails.get(key, []) if t > cutoff]
+        if kept:
+            self._fails[key] = kept
+        else:
+            self._fails.pop(key, None)
+        return kept
+
+    def check(self, username: str):
+        key = username.strip().lower()
+        with self._lock:
+            recent = self._recent(key)
+            if len(recent) >= self.max_fails:
+                wait = int(recent[0] + self.window_s - self._now()) + 1
+                raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                                    f"Too many failed sign-in attempts. Try again in {max(1, wait // 60 + (wait % 60 > 0))} minute(s).",
+                                    headers={"Retry-After": str(wait)})
+
+    def failed(self, username: str):
+        with self._lock:
+            self._fails.setdefault(username.strip().lower(), []).append(self._now())
+
+    def succeeded(self, username: str):
+        with self._lock:
+            self._fails.pop(username.strip().lower(), None)
+
+
+throttle = LoginThrottle(int(os.getenv("LOGIN_MAX_FAILS", "5")), int(os.getenv("LOGIN_LOCK_MINUTES", "15")) * 60)
 
 
 def hash_password(pw: str) -> str:

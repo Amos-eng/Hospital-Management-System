@@ -6,16 +6,19 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import AuditLog, Role, User
 from ..schemas import PasswordChangeIn, TokenOut, UserCreate, UserOut
-from ..security import audit, create_token, current_user, hash_password, require, verify_password
+from ..security import audit, create_token, throttle, current_user, hash_password, require, verify_password
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
 
 @router.post("/auth/login", response_model=TokenOut)
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    throttle.check(form.username)
     user = db.scalar(select(User).where(User.username == form.username))
     if not user or not user.active or not verify_password(form.password, user.password_hash):
+        throttle.failed(form.username)
         raise HTTPException(401, "Incorrect username or password")
+    throttle.succeeded(form.username)
     audit(db, user, "LOGIN", "user", user.id)
     db.commit()
     return TokenOut(access_token=create_token(user), user=UserOut.model_validate(user))

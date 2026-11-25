@@ -49,3 +49,31 @@ def test_change_password(client):
     assert client.post(url, json={"current_password": pw, "new_password": "New-Pass-456"}).status_code == 401  # needs a token
     log = client.get("/api/audit", headers=auth(client, "admin")).json()
     assert any(e["username"] == "pw.user" and e["detail"] == "password changed" for e in log)
+
+
+# ---------- login throttling ----------
+def test_login_lockout_and_recovery(client):
+    from app import security
+    pw = make_user(client, "lock.user")
+    clock = [1000.0]
+    real = security.throttle._now
+    security.throttle._now = lambda: clock[0]
+    try:
+        for _ in range(5):
+            assert login(client, "lock.user", "wrong-password").status_code == 401
+        r = login(client, "lock.user", pw)                      # correct password, but locked
+        assert r.status_code == 429 and int(r.headers["Retry-After"]) > 0
+        assert "minute" in r.json()["detail"]
+        assert login(client, "pw.user", "x").status_code in (401, 429) and login(client, "admin").status_code == 200  # others unaffected
+        clock[0] += 15 * 60 + 5                                   # window passes
+        assert login(client, "lock.user", pw).status_code == 200
+        # a success resets the counter: 4 more failures do not lock
+        for _ in range(4):
+            login(client, "lock.user", "wrong-password")
+        assert login(client, "lock.user", pw).status_code == 200
+        # unknown usernames are throttled too, with the same response shape
+        for _ in range(5):
+            assert login(client, "nobody.here", "x").status_code == 401
+        assert login(client, "nobody.here", "x").status_code == 429
+    finally:
+        security.throttle._now = real
