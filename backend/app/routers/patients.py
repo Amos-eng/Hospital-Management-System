@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -7,7 +7,7 @@ from ..models import ClinicalNote, LabOrder, Patient, Prescription, Role, User, 
 from ..schemas import (ImagingOut, LabOrderOut, NoteIn, NoteOut, PatientIn, PatientOut, PrescriptionOut,
                        VitalsIn, VitalsOut)
 from ..security import CLINICAL, audit, current_user, require
-from ..models import ImagingOrder
+from ..models import Admission, ERVisit, ImagingOrder, Surgery
 from .helpers import imaging_out, lab_out, rx_out
 
 router = APIRouter(prefix="/api/patients", tags=["patients"])
@@ -128,3 +128,48 @@ def patient_imaging(pid: int, db: Session = Depends(get_db), user: User = Depend
     rows = db.scalars(select(ImagingOrder).where(ImagingOrder.patient_id == pid)
                       .order_by(ImagingOrder.ordered_at.desc())).all()
     return [imaging_out(r) for r in rows]
+
+
+@router.get("/{pid}/timeline")
+def timeline(pid: int, limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db),
+             user: User = Depends(require(*CLINICAL))):
+    """Everything that happened to a patient, newest first, from every module."""
+    get_patient_or_404(db, pid)
+    ev = []
+
+    def add(at, kind, title, detail=None, by=None, flag=False):
+        if at:
+            ev.append(dict(at=at, kind=kind, title=title, detail=detail, by=by, flag=flag))
+
+    for n in db.scalars(select(ClinicalNote).where(ClinicalNote.patient_id == pid)):
+        add(n.at, "note", f"{n.kind.capitalize()} note", n.text[:300], n.author.full_name)
+    for v in db.scalars(select(Vitals).where(Vitals.patient_id == pid)):
+        parts = [f"HR {v.heart_rate}" if v.heart_rate is not None else None,
+                 f"BP {v.systolic}/{v.diastolic}" if v.systolic is not None else None,
+                 f"Temp {v.temperature_c}°C" if v.temperature_c is not None else None,
+                 f"SpO2 {v.spo2}%" if v.spo2 is not None else None,
+                 f"RR {v.resp_rate}" if v.resp_rate is not None else None]
+        add(v.at, "vitals", "Vitals recorded", " · ".join(p for p in parts if p), flag=v.spo2 is not None and v.spo2 < 94)
+    for l in db.scalars(select(LabOrder).where(LabOrder.patient_id == pid)):
+        add(l.ordered_at, "lab", f"Lab ordered: {l.test_name}", f"Priority {l.priority}", l.ordered_by.full_name)
+        add(l.resulted_at, "lab", f"Lab resulted: {l.test_name}", l.result, flag=l.abnormal)
+    for i in db.scalars(select(ImagingOrder).where(ImagingOrder.patient_id == pid)):
+        add(i.ordered_at, "imaging", f"Imaging ordered: {i.modality.upper()} {i.body_part}", i.clinical_info, i.ordered_by.full_name)
+        add(i.reported_at, "imaging", f"Imaging reported: {i.modality.upper()} {i.body_part}", (i.report or "")[:300],
+            i.radiologist.full_name if i.radiologist else None, flag=i.critical)
+    for r in db.scalars(select(Prescription).where(Prescription.patient_id == pid)):
+        add(r.created_at, "prescription", f"Prescribed: {r.drug.name}", f"{r.dosage} x{r.quantity}", r.prescriber.full_name)
+        add(r.dispensed_at, "prescription", f"Dispensed: {r.drug.name}")
+    for a in db.scalars(select(Admission).where(Admission.patient_id == pid)):
+        add(a.admitted_at, "admission", "Admitted", a.reason, a.attending.full_name)
+        add(a.discharged_at, "admission", "Discharged", (a.discharge_summary or "")[:300])
+    for e in db.scalars(select(ERVisit).where(ERVisit.patient_id == pid)):
+        add(e.arrived_at, "er", f"ER arrival (ESI {e.triage_level})", e.complaint, flag=e.triage_level <= 2)
+        add(e.closed_at, "er", f"ER visit closed: {e.status}")
+    for s in db.scalars(select(Surgery).where(Surgery.patient_id == pid)):
+        add(s.start, "surgery", f"Surgery: {s.procedure}", f"{s.priority}, {s.status}", s.surgeon.full_name)
+
+    ev.sort(key=lambda e: e["at"], reverse=True)
+    audit(db, user, "READ", "patient_timeline", pid)
+    db.commit()
+    return ev[:limit]

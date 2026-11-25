@@ -116,3 +116,35 @@ def test_dashboard_ward_occupancy(client):
     for w in wards.values():
         assert 0 <= w["occupied"] <= w["total"] and w["percent"] == round(100 * w["occupied"] / w["total"])
     assert wards["ICU"]["occupied"] >= 1  # seeded inpatient
+
+
+# ---------- patient timeline ----------
+def test_patient_timeline(client):
+    doc, lab, rad = auth(client, "dr.hunt"), auth(client, "lab.tran"), auth(client, "dr.chen")
+    front = auth(client, "front.amy")
+    pid = client.post("/api/patients", headers=front, json={"first_name": "Time", "last_name": "Line", "dob": "1980-05-05", "sex": "male"}).json()["id"]
+    assert client.get(f"/api/patients/{pid}/timeline", headers=doc).json() == []
+
+    client.post(f"/api/patients/{pid}/notes", headers=doc, json={"text": "Presented with fever.", "kind": "diagnosis"})
+    client.post(f"/api/patients/{pid}/vitals", headers=doc, json={"heart_rate": 110, "spo2": 91})
+    lid = client.post("/api/labs", headers=doc, json={"patient_id": pid, "test_name": "Blood culture"}).json()["id"]
+    client.post(f"/api/labs/{lid}/collect", headers=lab)
+    client.post(f"/api/labs/{lid}/result", headers=lab, json={"result": "Gram-positive cocci", "abnormal": True})
+    iid = client.post("/api/imaging", headers=doc, json={"patient_id": pid, "modality": "xray", "body_part": "Chest"}).json()["id"]
+    client.post(f"/api/imaging/{iid}/perform", headers=rad)
+    client.post(f"/api/imaging/{iid}/report", headers=rad, json={"report": "Right lower lobe consolidation.", "critical": True})
+
+    tl = client.get(f"/api/patients/{pid}/timeline", headers=doc).json()
+    titles = [e["title"] for e in tl]
+    assert "Diagnosis note" in titles and "Vitals recorded" in titles
+    assert "Lab ordered: Blood culture" in titles and "Lab resulted: Blood culture" in titles
+    assert "Imaging reported: XRAY Chest" in titles
+    assert [e["at"] for e in tl] == sorted((e["at"] for e in tl), reverse=True)    # newest first
+    flagged = {e["title"] for e in tl if e["flag"]}
+    assert flagged == {"Vitals recorded", "Lab resulted: Blood culture", "Imaging reported: XRAY Chest"}  # SpO2 91, abnormal, critical
+    assert next(e for e in tl if e["kind"] == "vitals")["detail"] == "HR 110 · SpO2 91%"
+    assert len(client.get(f"/api/patients/{pid}/timeline?limit=2", headers=doc).json()) == 2
+    assert client.get(f"/api/patients/{pid}/timeline?limit=0", headers=doc).status_code == 422
+    assert client.get("/api/patients/99999/timeline", headers=doc).status_code == 404
+    assert client.get(f"/api/patients/{pid}/timeline", headers=auth(client, "bill.cole")).status_code == 403
+    assert client.get(f"/api/patients/{pid}/timeline", headers=auth(client, "pharm.lee")).status_code == 403
